@@ -21,7 +21,9 @@ type Backend struct {
 	HealthChecks    []GenericHealthCheck `yaml:"healthchecks"` // Health check configurations
 	Timeout         string               // Timeout for requests
 	Alive           bool                 // Indicates if the backend is alive
+	Continent       string               // Continent code or name for GeoIP (e.g. EU, Europe)
 	Country         string               // Country code for GeoIP
+	Subdivision     string               // Subdivision/state code for GeoIP (e.g. CA, NY)
 	City            string               // City name for GeoIP
 	ASN             string               // ASN for GeoIP
 	Location        string               // location
@@ -80,8 +82,16 @@ func (b *Backend) GetTimeout() string {
 	return b.Timeout
 }
 
+func (b *Backend) GetContinent() string {
+	return b.Continent
+}
+
 func (b *Backend) GetCountry() string {
 	return b.Country
+}
+
+func (b *Backend) GetSubdivision() string {
+	return b.Subdivision
 }
 
 func (b *Backend) GetCity() string {
@@ -106,7 +116,9 @@ func (b *Backend) UnmarshalYAML(unmarshal func(interface{}) error) error {
 		Tags         []string      `yaml:"tags"`
 		Timeout      string        `yaml:"timeout" default:"5s"`
 		HealthChecks []HealthCheck `yaml:"healthchecks"`
+		Continent    string        `yaml:"continent"`
 		Country      string        `yaml:"country"`
+		Subdivision  string        `yaml:"subdivision"`
 		City         string        `yaml:"city"`
 		ASN          string        `yaml:"asn"`
 		Location     string        `yaml:"location"`
@@ -122,7 +134,9 @@ func (b *Backend) UnmarshalYAML(unmarshal func(interface{}) error) error {
 	b.Enable = raw.Enable
 	b.Tags = raw.Tags
 	b.Timeout = raw.Timeout
+	b.Continent = raw.Continent
 	b.Country = raw.Country
+	b.Subdivision = raw.Subdivision
 	b.City = raw.City
 	b.ASN = raw.ASN
 	b.Location = raw.Location
@@ -173,9 +187,19 @@ func (b *Backend) updateBackend(newBackend BackendInterface) {
 		b.Timeout = newBackend.GetTimeout()
 	}
 
+	if b.Continent != newBackend.GetContinent() {
+		log.Infof("[%s] backend %s updated, continent changed from %s to %s", b.Fqdn, b.Address, b.Continent, newBackend.GetContinent())
+		b.Continent = newBackend.GetContinent()
+	}
+
 	if b.Country != newBackend.GetCountry() {
 		log.Infof("[%s] backend %s updated, country changed from %s to %s", b.Fqdn, b.Address, b.Country, newBackend.GetCountry())
 		b.Country = newBackend.GetCountry()
+	}
+
+	if b.Subdivision != newBackend.GetSubdivision() {
+		log.Infof("[%s] backend %s updated, subdivision changed from %s to %s", b.Fqdn, b.Address, b.Subdivision, newBackend.GetSubdivision())
+		b.Subdivision = newBackend.GetSubdivision()
 	}
 
 	if b.City != newBackend.GetCity() {
@@ -306,7 +330,9 @@ type BackendInterface interface {
 	GetTags() []string
 	GetHealthChecks() []GenericHealthCheck
 	GetTimeout() string
+	GetContinent() string
 	GetCountry() string
+	GetSubdivision() string
 	GetCity() string
 	GetASN() string
 	GetLocation() string

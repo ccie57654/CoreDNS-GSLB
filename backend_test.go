@@ -14,7 +14,9 @@ func TestBackend_UnmarshalYAML(t *testing.T) {
 address: "127.0.0.1"
 priority: 10
 description: "helloworld"
+continent: "EU"
 country: "FR"
+subdivision: "IDF"
 city: "Paris"
 asn: "64500"
 location: "edge-eu"
@@ -34,7 +36,9 @@ healthchecks:
 	assert.Equal(t, true, backend.Enable)
 	assert.Equal(t, "10s", backend.Timeout)
 	assert.Equal(t, "helloworld", backend.Description)
+	assert.Equal(t, "EU", backend.Continent)
 	assert.Equal(t, "FR", backend.Country)
+	assert.Equal(t, "IDF", backend.Subdivision)
 	assert.Equal(t, "Paris", backend.City)
 	assert.Equal(t, "64500", backend.ASN)
 	assert.Equal(t, "edge-eu", backend.Location)
@@ -67,7 +71,9 @@ func TestBackend_Getters(t *testing.T) {
 		Enable:       true,
 		HealthChecks: []GenericHealthCheck{},
 		Timeout:      "5s",
+		Continent:    "EU",
 		Country:      "FR",
+		Subdivision:  "IDF",
 		Location:     "eu-west-1",
 	}
 
@@ -78,7 +84,9 @@ func TestBackend_Getters(t *testing.T) {
 	assert.Equal(t, true, b.IsEnabled())
 	assert.Equal(t, []GenericHealthCheck{}, b.GetHealthChecks())
 	assert.Equal(t, "5s", b.GetTimeout())
+	assert.Equal(t, "EU", b.GetContinent())
 	assert.Equal(t, "FR", b.GetCountry())
+	assert.Equal(t, "IDF", b.GetSubdivision())
 	assert.Equal(t, "eu-west-1", b.GetLocation())
 	assert.Equal(t, "FR", b.GetCountry())
 	assert.Equal(t, "eu-west-1", b.GetLocation())
@@ -164,7 +172,9 @@ func TestBackend_UpdateBackend(t *testing.T) {
 		Description: "old description",
 		Tags:        []string{"tag1", "tag2"},
 		Timeout:     "5s",
+		Continent:   "NA",
 		Country:     "US",
+		Subdivision: "NY",
 		City:        "New York",
 		ASN:         "64512",
 		Location:    "us-east",
@@ -181,7 +191,9 @@ func TestBackend_UpdateBackend(t *testing.T) {
 		Description: "new description",
 		Tags:        []string{"tag3", "tag4", "tag5"},
 		Timeout:     "10s",
+		Continent:   "EU",
 		Country:     "FR",
+		Subdivision: "IDF",
 		City:        "Paris",
 		ASN:         "64513",
 		Location:    "eu-west",
@@ -203,7 +215,9 @@ func TestBackend_UpdateBackend(t *testing.T) {
 	assert.Equal(t, "new description", b.Description, "Description should be updated")
 	assert.Equal(t, []string{"tag3", "tag4", "tag5"}, b.Tags, "Tags should be updated")
 	assert.Equal(t, "10s", b.Timeout, "Timeout should be updated")
+	assert.Equal(t, "EU", b.Continent, "Continent should be updated")
 	assert.Equal(t, "FR", b.Country, "Country should be updated")
+	assert.Equal(t, "IDF", b.Subdivision, "Subdivision should be updated")
 	assert.Equal(t, "Paris", b.City, "City should be updated")
 	assert.Equal(t, "64513", b.ASN, "ASN should be updated")
 	assert.Equal(t, "eu-west", b.Location, "Location should be updated")

@@ -207,7 +207,9 @@ Example backend with all GeoIP location fields
 
 ~~~yaml
 - address: "172.16.0.12"
+  continent: "EU"
   country: "FR"
+  subdivision: "IDF"
   city: "Paris"
   asn: "12345"
   location: "eu-west-1"
@@ -220,6 +222,8 @@ Example backend with all GeoIP location fields
         service: ""
         timeout: 5s
 ~~~
+
+For `continent`, use the exact MaxMind continent code from `Continent.Code`: `AF`, `AN`, `AS`, `EU`, `NA`, `OC`, `SA`.
 
 ### API Server Options
 
@@ -280,7 +284,5 @@ records:
       - address: 10.0.0.1
         healthchecks: [ https_default ]  # Uses the local version
 ```
-
-
 
 

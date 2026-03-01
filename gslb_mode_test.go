@@ -306,6 +306,139 @@ func TestGSLB_PickBackendWithGeoIP_Country_MaxMind(t *testing.T) {
 	}
 }
 
+func TestGSLB_PickBackendWithGeoIP_Country_MaxMind_ContinentOnly(t *testing.T) {
+	db, err := geoip2.Open("tests/GeoLite2-Country.mmdb")
+	if err != nil {
+		t.Skip("GeoLite2-Country.mmdb not found, skipping real MaxMind test")
+	}
+	defer db.Close()
+
+	backendEU := &MockBackend{Backend: &Backend{Address: "50.0.0.1", Enable: true, Priority: 10, Continent: "EU"}}
+	backendNA := &MockBackend{Backend: &Backend{Address: "60.0.0.1", Enable: true, Priority: 20, Continent: "NA"}}
+	backendEU.On("IsHealthy").Return(true)
+	backendNA.On("IsHealthy").Return(true)
+
+	record := &Record{
+		Fqdn:     "geo-continent.example.com.",
+		Mode:     "geoip",
+		Backends: []BackendInterface{backendEU, backendNA},
+	}
+
+	g := &GSLB{
+		GeoIPCountryDB: db,
+	}
+
+	testCases := []struct {
+		name     string
+		clientIP string
+		expect   []string
+	}{
+		{"EU IP", "81.185.159.80", []string{"50.0.0.1"}}, // France
+		{"NA IP", "8.8.8.8", []string{"60.0.0.1"}},       // United States
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			ips, err := g.pickBackendWithGeoIP(record, dns.TypeA, net.ParseIP(tc.clientIP))
+			assert.NoError(t, err)
+			assert.Equal(t, tc.expect, ips)
+		})
+	}
+}
+
+func TestGSLB_PickBackendWithGeoIP_CitySubdivisionCountryHierarchy(t *testing.T) {
+	db, err := geoip2.Open("tests/GeoLite2-City.mmdb")
+	if err != nil {
+		t.Skip("GeoLite2-City.mmdb not found, skipping city/subdivision hierarchy test")
+	}
+	defer db.Close()
+
+	g := &GSLB{
+		GeoIPCityDB: db,
+	}
+
+	clientIP := net.ParseIP("9.9.9.9") // US, subdivision CA, city Berkeley in tests DB
+
+	t.Run("city match wins over subdivision and country", func(t *testing.T) {
+		backendCity := &MockBackend{Backend: &Backend{Address: "10.0.0.1", Enable: true, Priority: 10, City: "Berkeley"}}
+		backendSubdivision := &MockBackend{Backend: &Backend{Address: "10.0.0.2", Enable: true, Priority: 20, Country: "US", Subdivision: "CA"}}
+		backendCountry := &MockBackend{Backend: &Backend{Address: "10.0.0.3", Enable: true, Priority: 30, Country: "US"}}
+		backendCity.On("IsHealthy").Return(true)
+		backendSubdivision.On("IsHealthy").Return(true)
+		backendCountry.On("IsHealthy").Return(true)
+
+		record := &Record{
+			Fqdn:     "geo-hierarchy.example.com.",
+			Mode:     "geoip",
+			Backends: []BackendInterface{backendCity, backendSubdivision, backendCountry},
+		}
+
+		ips, err := g.pickBackendWithGeoIP(record, dns.TypeA, clientIP)
+		assert.NoError(t, err)
+		assert.Equal(t, []string{"10.0.0.1"}, ips)
+	})
+
+	t.Run("city match is geo-aware and prefers most specific backend", func(t *testing.T) {
+		backendCityExact := &MockBackend{Backend: &Backend{Address: "10.0.0.1", Enable: true, Priority: 10, City: "Berkeley", Country: "US", Subdivision: "CA"}}
+		backendCityCountry := &MockBackend{Backend: &Backend{Address: "10.0.0.2", Enable: true, Priority: 20, City: "Berkeley", Country: "US"}}
+		backendCityWrongCountry := &MockBackend{Backend: &Backend{Address: "10.0.0.3", Enable: true, Priority: 30, City: "Berkeley", Country: "GB"}}
+		backendCityWrongSubdivision := &MockBackend{Backend: &Backend{Address: "10.0.0.4", Enable: true, Priority: 40, City: "Berkeley", Country: "US", Subdivision: "NY"}}
+		backendCityExact.On("IsHealthy").Return(true)
+		backendCityCountry.On("IsHealthy").Return(true)
+		backendCityWrongCountry.On("IsHealthy").Return(true)
+		backendCityWrongSubdivision.On("IsHealthy").Return(true)
+
+		record := &Record{
+			Fqdn: "geo-hierarchy.example.com.",
+			Mode: "geoip",
+			Backends: []BackendInterface{
+				backendCityExact,
+				backendCityCountry,
+				backendCityWrongCountry,
+				backendCityWrongSubdivision,
+			},
+		}
+
+		ips, err := g.pickBackendWithGeoIP(record, dns.TypeA, clientIP)
+		assert.NoError(t, err)
+		assert.Equal(t, []string{"10.0.0.1"}, ips)
+	})
+
+	t.Run("subdivision fallback wins when city has no match", func(t *testing.T) {
+		backendSubdivision := &MockBackend{Backend: &Backend{Address: "10.0.0.2", Enable: true, Priority: 20, Country: "US", Subdivision: "CA"}}
+		backendCountry := &MockBackend{Backend: &Backend{Address: "10.0.0.3", Enable: true, Priority: 30, Country: "US"}}
+		backendSubdivision.On("IsHealthy").Return(true)
+		backendCountry.On("IsHealthy").Return(true)
+
+		record := &Record{
+			Fqdn:     "geo-hierarchy.example.com.",
+			Mode:     "geoip",
+			Backends: []BackendInterface{backendSubdivision, backendCountry},
+		}
+
+		ips, err := g.pickBackendWithGeoIP(record, dns.TypeA, clientIP)
+		assert.NoError(t, err)
+		assert.Equal(t, []string{"10.0.0.2"}, ips)
+	})
+
+	t.Run("country fallback returns all country backends", func(t *testing.T) {
+		backendCountry1 := &MockBackend{Backend: &Backend{Address: "10.0.0.3", Enable: true, Priority: 30, Country: "US"}}
+		backendCountry2 := &MockBackend{Backend: &Backend{Address: "10.0.0.4", Enable: true, Priority: 40, Country: "US"}}
+		backendCountry1.On("IsHealthy").Return(true)
+		backendCountry2.On("IsHealthy").Return(true)
+
+		record := &Record{
+			Fqdn:     "geo-hierarchy.example.com.",
+			Mode:     "geoip",
+			Backends: []BackendInterface{backendCountry1, backendCountry2},
+		}
+
+		ips, err := g.pickBackendWithGeoIP(record, dns.TypeA, clientIP)
+		assert.NoError(t, err)
+		assert.Equal(t, []string{"10.0.0.3", "10.0.0.4"}, ips)
+	})
+}
+
 func TestGSLB_PickBackendWithGeoIP_City_MaxMind(t *testing.T) {
 	db, err := geoip2.Open("tests/GeoLite2-City.mmdb")
 	if err != nil {
@@ -338,6 +471,46 @@ func TestGSLB_PickBackendWithGeoIP_City_MaxMind(t *testing.T) {
 		{"Paris IP", "81.185.159.80", []string{"10.10.10.1"}},        // IP in Paris
 		{"Berlin IP", "141.20.20.1", []string{"20.20.20.1"}},         // IP in Berlin
 		{"Unknown city fallback", "8.8.8.8", []string{"10.10.10.1"}}, // fallback to lowest priority
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			ips, err := g.pickBackendWithGeoIP(record, dns.TypeA, net.ParseIP(tc.clientIP))
+			assert.NoError(t, err)
+			assert.Equal(t, tc.expect, ips)
+		})
+	}
+}
+
+func TestGSLB_PickBackendWithGeoIP_City_MaxMind_ContinentOnly(t *testing.T) {
+	db, err := geoip2.Open("tests/GeoLite2-City.mmdb")
+	if err != nil {
+		t.Skip("GeoLite2-City.mmdb not found, skipping real MaxMind city test")
+	}
+	defer db.Close()
+
+	backendEU := &MockBackend{Backend: &Backend{Address: "70.0.0.1", Enable: true, Priority: 10, Continent: "EU"}}
+	backendNA := &MockBackend{Backend: &Backend{Address: "80.0.0.1", Enable: true, Priority: 20, Continent: "NA"}}
+	backendEU.On("IsHealthy").Return(true)
+	backendNA.On("IsHealthy").Return(true)
+
+	record := &Record{
+		Fqdn:     "geo-continent-city.example.com.",
+		Mode:     "geoip",
+		Backends: []BackendInterface{backendEU, backendNA},
+	}
+
+	g := &GSLB{
+		GeoIPCityDB: db,
+	}
+
+	testCases := []struct {
+		name     string
+		clientIP string
+		expect   []string
+	}{
+		{"EU city IP", "141.20.20.1", []string{"70.0.0.1"}}, // Berlin
+		{"NA city IP", "9.9.9.9", []string{"80.0.0.1"}},     // Berkeley
 	}
 
 	for _, tc := range testCases {

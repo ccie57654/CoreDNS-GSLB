@@ -5,6 +5,7 @@ import (
 	"math/rand"
 	"net"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/miekg/dns"
@@ -150,46 +151,195 @@ func (g *GSLB) pickBackendWithWeighted(record *Record, recordType uint16) ([]str
 
 // pickBackendWithGeoIP implements advanced GeoIP routing: country, city, ASN, custom location, with fallback to failover.
 func (g *GSLB) pickBackendWithGeoIP(record *Record, recordType uint16, clientIP net.IP) ([]string, error) {
-	// 1. Country-based routing (highest priority)
-	if g.GeoIPCountryDB != nil {
-		recordCountry, err := g.GeoIPCountryDB.Country(clientIP)
-		if err == nil && recordCountry != nil && recordCountry.Country.IsoCode != "" {
-			countryCode := recordCountry.Country.IsoCode
-			var matchedIPs []string
-			for _, backend := range record.Backends {
-				if backend.IsHealthy() && backend.IsEnabled() {
-					if backend.GetCountry() == countryCode {
-						matchedIPs = append(matchedIPs, backend.GetAddress())
-						IncBackendSelected(record.Fqdn, backend.GetAddress())
-						break
+	// 1. Geo hierarchy with city DB (city -> subdivision -> country -> continent)
+	if g.GeoIPCityDB != nil {
+		recordCity, err := g.GeoIPCityDB.City(clientIP)
+		if err == nil && recordCity != nil {
+			cityName := ""
+			if recordCity.City.Names != nil {
+				cityName = recordCity.City.Names["en"]
+			}
+			subdivisionCode := ""
+			if len(recordCity.Subdivisions) > 0 {
+				subdivisionCode = strings.ToUpper(recordCity.Subdivisions[0].IsoCode)
+			}
+			continentCode := recordCity.Continent.Code
+			countryCode := strings.ToUpper(recordCity.Country.IsoCode)
+
+			// 1.a city
+			if cityName != "" {
+				var cityCountrySubdivisionIPs []string
+				var cityCountryIPs []string
+				var cityOnlyIPs []string
+				for _, backend := range record.Backends {
+					if !backend.IsHealthy() || !backend.IsEnabled() {
+						continue
+					}
+
+					if !strings.EqualFold(backend.GetCity(), cityName) {
+						continue
+					}
+
+					backendContinent := backend.GetContinent()
+					backendCountry := strings.ToUpper(backend.GetCountry())
+					backendSubdivision := strings.ToUpper(backend.GetSubdivision())
+
+					// If backend provides a continent hint, it must match client geo.
+					if backendContinent != "" && backendContinent != continentCode {
+						continue
+					}
+
+					// If backend provides country/subdivision hints, they must match client geo.
+					if backendCountry != "" && backendCountry != countryCode {
+						continue
+					}
+					if backendSubdivision != "" && backendSubdivision != subdivisionCode {
+						continue
+					}
+
+					switch {
+					case backendCountry != "" && backendSubdivision != "":
+						cityCountrySubdivisionIPs = append(cityCountrySubdivisionIPs, backend.GetAddress())
+					case backendCountry != "":
+						cityCountryIPs = append(cityCountryIPs, backend.GetAddress())
+					default:
+						cityOnlyIPs = append(cityOnlyIPs, backend.GetAddress())
 					}
 				}
+
+				switch {
+				case len(cityCountrySubdivisionIPs) > 0:
+					for _, ip := range cityCountrySubdivisionIPs {
+						IncBackendSelected(record.Fqdn, ip)
+					}
+					return cityCountrySubdivisionIPs, nil
+				case len(cityCountryIPs) > 0:
+					for _, ip := range cityCountryIPs {
+						IncBackendSelected(record.Fqdn, ip)
+					}
+					return cityCountryIPs, nil
+				case len(cityOnlyIPs) > 0:
+					for _, ip := range cityOnlyIPs {
+						IncBackendSelected(record.Fqdn, ip)
+					}
+					return cityOnlyIPs, nil
+				}
 			}
-			if len(matchedIPs) > 0 {
-				return matchedIPs, nil
+
+			// 1.b subdivision
+			if subdivisionCode != "" {
+				var subdivisionMatchedIPs []string
+				for _, backend := range record.Backends {
+					if !backend.IsHealthy() || !backend.IsEnabled() {
+						continue
+					}
+					backendContinent := backend.GetContinent()
+					if backendContinent != "" && backendContinent != continentCode {
+						continue
+					}
+					if strings.ToUpper(backend.GetSubdivision()) != subdivisionCode {
+						continue
+					}
+					// If backend declares a country, it must match client country.
+					if backend.GetCountry() != "" && !strings.EqualFold(backend.GetCountry(), countryCode) {
+						continue
+					}
+					subdivisionMatchedIPs = append(subdivisionMatchedIPs, backend.GetAddress())
+				}
+				if len(subdivisionMatchedIPs) > 0 {
+					for _, ip := range subdivisionMatchedIPs {
+						IncBackendSelected(record.Fqdn, ip)
+					}
+					return subdivisionMatchedIPs, nil
+				}
+			}
+
+			// 1.c country
+			if countryCode != "" {
+				var countryMatchedIPs []string
+				for _, backend := range record.Backends {
+					if !backend.IsHealthy() || !backend.IsEnabled() {
+						continue
+					}
+					backendContinent := backend.GetContinent()
+					if backendContinent != "" && backendContinent != continentCode {
+						continue
+					}
+					if strings.EqualFold(backend.GetCountry(), countryCode) {
+						countryMatchedIPs = append(countryMatchedIPs, backend.GetAddress())
+					}
+				}
+				if len(countryMatchedIPs) > 0 {
+					for _, ip := range countryMatchedIPs {
+						IncBackendSelected(record.Fqdn, ip)
+					}
+					return countryMatchedIPs, nil
+				}
+			}
+
+			// 1.d continent
+			if continentCode != "" {
+				var continentMatchedIPs []string
+				for _, backend := range record.Backends {
+					if !backend.IsHealthy() || !backend.IsEnabled() {
+						continue
+					}
+					if backend.GetContinent() == continentCode {
+						continentMatchedIPs = append(continentMatchedIPs, backend.GetAddress())
+					}
+				}
+				if len(continentMatchedIPs) > 0 {
+					for _, ip := range continentMatchedIPs {
+						IncBackendSelected(record.Fqdn, ip)
+					}
+					return continentMatchedIPs, nil
+				}
 			}
 		}
 	}
 
-	// 2. City-based routing (if city DB loaded)
-	if g.GeoIPCityDB != nil {
-		recordCity, err := g.GeoIPCityDB.City(clientIP)
-		if err == nil && recordCity != nil && recordCity.City.Names != nil {
-			cityName := recordCity.City.Names["en"]
-			if cityName != "" {
-				var matchedIPs []string
+	// 2. Country-based routing with country DB (for country-only setups)
+	if g.GeoIPCountryDB != nil {
+		recordCountry, err := g.GeoIPCountryDB.Country(clientIP)
+		if err == nil && recordCountry != nil {
+			countryCode := strings.ToUpper(recordCountry.Country.IsoCode)
+			continentCode := recordCountry.Continent.Code
+			var matchedIPs []string
+			if countryCode != "" {
 				for _, backend := range record.Backends {
 					if backend.IsHealthy() && backend.IsEnabled() {
-						if backend.GetCity() == cityName {
+						backendContinent := backend.GetContinent()
+						if backendContinent != "" && backendContinent != continentCode {
+							continue
+						}
+						if strings.EqualFold(backend.GetCountry(), countryCode) {
 							matchedIPs = append(matchedIPs, backend.GetAddress())
-							IncBackendSelected(record.Fqdn, backend.GetAddress())
-							break
 						}
 					}
 				}
-				if len(matchedIPs) > 0 {
-					return matchedIPs, nil
+			}
+			if len(matchedIPs) > 0 {
+				for _, ip := range matchedIPs {
+					IncBackendSelected(record.Fqdn, ip)
 				}
+				return matchedIPs, nil
+			}
+
+			// 2.b continent (country DB also provides continent metadata)
+			if continentCode != "" {
+				for _, backend := range record.Backends {
+					if backend.IsHealthy() && backend.IsEnabled() {
+						if backend.GetContinent() == continentCode {
+							matchedIPs = append(matchedIPs, backend.GetAddress())
+						}
+					}
+				}
+			}
+			if len(matchedIPs) > 0 {
+				for _, ip := range matchedIPs {
+					IncBackendSelected(record.Fqdn, ip)
+				}
+				return matchedIPs, nil
 			}
 		}
 	}

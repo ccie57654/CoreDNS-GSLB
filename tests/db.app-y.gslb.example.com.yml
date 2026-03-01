@@ -55,3 +55,37 @@ records:
         priority: 2
     description: GeoIP-based routing between Paris and London backends
     mode: geoip
+
+  webapp-geoip-city.app-y.gslb.example.com.:
+    backends:
+      - address: 172.16.0.10
+        description: webapp10
+        country: US
+        subdivision: CA
+        city: San Jose
+        enable: true
+        healthchecks:
+          - https_default
+      - address: 172.16.0.11
+        description: webapp11
+        country: US
+        subdivision: NJ
+        city: Oakland
+        enable: true
+        healthchecks:
+          - https_default
+      - address: 172.16.0.12
+        description: webapp12
+        country: CA
+        subdivision: BC
+        enable: true
+        healthchecks:
+          - https_default
+      - address: 172.16.0.13
+        description: webapp13
+        continent: EU
+    description: GeoIP-based routing multi geo distributed backends
+    mode: geoip
+
+
+    
