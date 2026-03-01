@@ -3,6 +3,7 @@ package gslb
 import (
 	"context"
 	"fmt"
+	"math"
 	"sync"
 	"time"
 
@@ -27,6 +28,11 @@ type Backend struct {
 	City            string               // City name for GeoIP
 	ASN             string               // ASN for GeoIP
 	Location        string               // location
+	Longitude       float64              // Longitude for distance-based GeoIP routing
+	Latitude        float64              // Latitude for distance-based GeoIP routing
+	LongitudeRad    float64              // Precomputed longitude in radians for distance calculations
+	LatitudeRad     float64              // Precomputed latitude in radians for distance calculations
+	HasCoordinates  bool                 // Indicates whether both coordinates were explicitly configured
 	LastHealthcheck time.Time            // Last time a healthcheck was launched
 	mutex           sync.RWMutex
 }
@@ -106,6 +112,26 @@ func (b *Backend) GetLocation() string {
 	return b.Location
 }
 
+func (b *Backend) GetLongitude() float64 {
+	return b.Longitude
+}
+
+func (b *Backend) GetLatitude() float64 {
+	return b.Latitude
+}
+
+func (b *Backend) GetLongitudeRad() float64 {
+	return b.LongitudeRad
+}
+
+func (b *Backend) GetLatitudeRad() float64 {
+	return b.LatitudeRad
+}
+
+func (b *Backend) HasGeoCoordinates() bool {
+	return b.HasCoordinates
+}
+
 func (b *Backend) UnmarshalYAML(unmarshal func(interface{}) error) error {
 	var raw struct {
 		Description  string        `yaml:"description" default:""`
@@ -122,6 +148,8 @@ func (b *Backend) UnmarshalYAML(unmarshal func(interface{}) error) error {
 		City         string        `yaml:"city"`
 		ASN          string        `yaml:"asn"`
 		Location     string        `yaml:"location"`
+		Longitude    *float64      `yaml:"longitude"`
+		Latitude     *float64      `yaml:"latitude"`
 	}
 	defaults.Set(&raw)
 	if err := unmarshal(&raw); err != nil {
@@ -140,6 +168,18 @@ func (b *Backend) UnmarshalYAML(unmarshal func(interface{}) error) error {
 	b.City = raw.City
 	b.ASN = raw.ASN
 	b.Location = raw.Location
+	longitudeSet := false
+	latitudeSet := false
+	if raw.Longitude != nil {
+		b.Longitude = *raw.Longitude
+		longitudeSet = true
+	}
+	if raw.Latitude != nil {
+		b.Latitude = *raw.Latitude
+		latitudeSet = true
+	}
+	b.HasCoordinates = longitudeSet && latitudeSet
+	b.recomputeCoordinateRadians()
 	for _, hc := range raw.HealthChecks {
 		specificHC, err := hc.ToSpecificHealthCheck()
 		if err != nil {
@@ -216,6 +256,23 @@ func (b *Backend) updateBackend(newBackend BackendInterface) {
 		log.Infof("[%s] backend %s updated, location changed from %s to %s", b.Fqdn, b.Address, b.Location, newBackend.GetLocation())
 		b.Location = newBackend.GetLocation()
 	}
+
+	if b.Longitude != newBackend.GetLongitude() {
+		log.Infof("[%s] backend %s updated, longitude changed from %f to %f", b.Fqdn, b.Address, b.Longitude, newBackend.GetLongitude())
+		b.Longitude = newBackend.GetLongitude()
+	}
+
+	if b.Latitude != newBackend.GetLatitude() {
+		log.Infof("[%s] backend %s updated, latitude changed from %f to %f", b.Fqdn, b.Address, b.Latitude, newBackend.GetLatitude())
+		b.Latitude = newBackend.GetLatitude()
+	}
+
+	if b.HasCoordinates != newBackend.HasGeoCoordinates() {
+		log.Infof("[%s] backend %s updated, coordinate availability changed from %v to %v", b.Fqdn, b.Address, b.HasCoordinates, newBackend.HasGeoCoordinates())
+		b.HasCoordinates = newBackend.HasGeoCoordinates()
+	}
+
+	b.recomputeCoordinateRadians()
 
 	// Compare tags slice
 	if !tagsEqual(b.Tags, newBackend.GetTags()) {
@@ -319,6 +376,16 @@ func tagsEqual(t1, t2 []string) bool {
 	return true
 }
 
+func (b *Backend) recomputeCoordinateRadians() {
+	if !b.HasCoordinates {
+		b.LongitudeRad = 0
+		b.LatitudeRad = 0
+		return
+	}
+	b.LongitudeRad = b.Longitude * math.Pi / 180
+	b.LatitudeRad = b.Latitude * math.Pi / 180
+}
+
 type BackendInterface interface {
 	GetFqdn() string
 	SetFqdn(fqdn string)
@@ -336,6 +403,11 @@ type BackendInterface interface {
 	GetCity() string
 	GetASN() string
 	GetLocation() string
+	GetLongitude() float64
+	GetLatitude() float64
+	GetLongitudeRad() float64
+	GetLatitudeRad() float64
+	HasGeoCoordinates() bool
 	IsHealthy() bool
 	runHealthChecks(retries int, timeout time.Duration)
 	removeBackend()

@@ -20,6 +20,8 @@ subdivision: "IDF"
 city: "Paris"
 asn: "64500"
 location: "edge-eu"
+longitude: 2.3522
+latitude: 48.8566
 enable: true
 timeout: "10s"
 healthchecks:
@@ -42,6 +44,9 @@ healthchecks:
 	assert.Equal(t, "Paris", backend.City)
 	assert.Equal(t, "64500", backend.ASN)
 	assert.Equal(t, "edge-eu", backend.Location)
+	assert.Equal(t, 2.3522, backend.Longitude)
+	assert.Equal(t, 48.8566, backend.Latitude)
+	assert.True(t, backend.HasCoordinates)
 	assert.Len(t, backend.HealthChecks, 1)
 	assert.IsType(t, &HTTPHealthCheck{}, backend.HealthChecks[0])
 }
@@ -64,17 +69,20 @@ func TestBackend_RunHealthChecks(t *testing.T) {
 
 func TestBackend_Getters(t *testing.T) {
 	b := &Backend{
-		Fqdn:         "test.example.com.",
-		Description:  "desc",
-		Address:      "1.2.3.4",
-		Priority:     10,
-		Enable:       true,
-		HealthChecks: []GenericHealthCheck{},
-		Timeout:      "5s",
-		Continent:    "EU",
-		Country:      "FR",
-		Subdivision:  "IDF",
-		Location:     "eu-west-1",
+		Fqdn:           "test.example.com.",
+		Description:    "desc",
+		Address:        "1.2.3.4",
+		Priority:       10,
+		Enable:         true,
+		HealthChecks:   []GenericHealthCheck{},
+		Timeout:        "5s",
+		Continent:      "EU",
+		Country:        "FR",
+		Subdivision:    "IDF",
+		Location:       "eu-west-1",
+		Longitude:      2.3522,
+		Latitude:       48.8566,
+		HasCoordinates: true,
 	}
 
 	assert.Equal(t, "test.example.com.", b.GetFqdn())
@@ -88,6 +96,9 @@ func TestBackend_Getters(t *testing.T) {
 	assert.Equal(t, "FR", b.GetCountry())
 	assert.Equal(t, "IDF", b.GetSubdivision())
 	assert.Equal(t, "eu-west-1", b.GetLocation())
+	assert.Equal(t, 2.3522, b.GetLongitude())
+	assert.Equal(t, 48.8566, b.GetLatitude())
+	assert.True(t, b.HasGeoCoordinates())
 	assert.Equal(t, "FR", b.GetCountry())
 	assert.Equal(t, "eu-west-1", b.GetLocation())
 }
@@ -165,38 +176,44 @@ func TestBackend_LockUnlock(t *testing.T) {
 
 func TestBackend_UpdateBackend(t *testing.T) {
 	b := &Backend{
-		Address:     "1.2.3.4",
-		Priority:    10,
-		Weight:      5,
-		Enable:      true,
-		Description: "old description",
-		Tags:        []string{"tag1", "tag2"},
-		Timeout:     "5s",
-		Continent:   "NA",
-		Country:     "US",
-		Subdivision: "NY",
-		City:        "New York",
-		ASN:         "64512",
-		Location:    "us-east",
+		Address:        "1.2.3.4",
+		Priority:       10,
+		Weight:         5,
+		Enable:         true,
+		Description:    "old description",
+		Tags:           []string{"tag1", "tag2"},
+		Timeout:        "5s",
+		Continent:      "NA",
+		Country:        "US",
+		Subdivision:    "NY",
+		City:           "New York",
+		ASN:            "64512",
+		Location:       "us-east",
+		Longitude:      -74.0060,
+		Latitude:       40.7128,
+		HasCoordinates: true,
 		HealthChecks: []GenericHealthCheck{
 			&MockHealthCheck{},
 		},
 	}
 
 	newBackend := &Backend{
-		Address:     "1.2.3.4", // Same address
-		Priority:    20,        // Different priority
-		Weight:      10,        // Different weight
-		Enable:      false,     // Different enable state
-		Description: "new description",
-		Tags:        []string{"tag3", "tag4", "tag5"},
-		Timeout:     "10s",
-		Continent:   "EU",
-		Country:     "FR",
-		Subdivision: "IDF",
-		City:        "Paris",
-		ASN:         "64513",
-		Location:    "eu-west",
+		Address:        "1.2.3.4", // Same address
+		Priority:       20,        // Different priority
+		Weight:         10,        // Different weight
+		Enable:         false,     // Different enable state
+		Description:    "new description",
+		Tags:           []string{"tag3", "tag4", "tag5"},
+		Timeout:        "10s",
+		Continent:      "EU",
+		Country:        "FR",
+		Subdivision:    "IDF",
+		City:           "Paris",
+		ASN:            "64513",
+		Location:       "eu-west",
+		Longitude:      2.3522,
+		Latitude:       48.8566,
+		HasCoordinates: true,
 		HealthChecks: []GenericHealthCheck{
 			&MockHealthCheck{},
 			&MockHealthCheck{},
@@ -221,6 +238,9 @@ func TestBackend_UpdateBackend(t *testing.T) {
 	assert.Equal(t, "Paris", b.City, "City should be updated")
 	assert.Equal(t, "64513", b.ASN, "ASN should be updated")
 	assert.Equal(t, "eu-west", b.Location, "Location should be updated")
+	assert.Equal(t, 2.3522, b.Longitude, "Longitude should be updated")
+	assert.Equal(t, 48.8566, b.Latitude, "Latitude should be updated")
+	assert.True(t, b.HasCoordinates, "HasCoordinates should be updated")
 	assert.Len(t, b.HealthChecks, 2, "HealthChecks should be updated")
 }
 

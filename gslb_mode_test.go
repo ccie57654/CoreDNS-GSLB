@@ -1,6 +1,7 @@
 package gslb
 
 import (
+	"math"
 	"net"
 	"testing"
 
@@ -520,6 +521,96 @@ func TestGSLB_PickBackendWithGeoIP_City_MaxMind_ContinentOnly(t *testing.T) {
 			assert.Equal(t, tc.expect, ips)
 		})
 	}
+}
+
+func TestGSLB_PickBackendWithGeoIP_CoordinatesNearest_Backend(t *testing.T) {
+	db, err := geoip2.Open("tests/GeoLite2-City.mmdb")
+	if err != nil {
+		t.Skip("GeoLite2-City.mmdb not found, skipping coordinate distance test")
+	}
+	defer db.Close()
+
+	backendNear := &MockBackend{Backend: &Backend{
+		Address:        "90.0.0.1",
+		Enable:         true,
+		Priority:       20,
+		Longitude:      -122.2727, // Oakland, CA
+		Latitude:       37.8044,
+		LongitudeRad:   -122.2727 * math.Pi / 180,
+		LatitudeRad:    37.8044 * math.Pi / 180,
+		HasCoordinates: true,
+	}}
+	backendFar := &MockBackend{Backend: &Backend{
+		Address:        "91.0.0.1",
+		Enable:         true,
+		Priority:       10,
+		Longitude:      2.3522, // Paris, FR
+		Latitude:       48.8566,
+		LongitudeRad:   2.3522 * math.Pi / 180,
+		LatitudeRad:    48.8566 * math.Pi / 180,
+		HasCoordinates: true,
+	}}
+	backendNear.On("IsHealthy").Return(true)
+	backendFar.On("IsHealthy").Return(true)
+
+	record := &Record{
+		Fqdn:     "geo-coordinates.example.com.",
+		Mode:     "geoip",
+		Backends: []BackendInterface{backendNear, backendFar},
+	}
+
+	g := &GSLB{
+		GeoIPCityDB: db,
+	}
+
+	ips, err := g.pickBackendWithGeoIP(record, dns.TypeA, net.ParseIP("9.9.9.9")) // Berkeley, CA in test DB
+	assert.NoError(t, err)
+	assert.Equal(t, []string{"90.0.0.1"}, ips)
+}
+
+func TestGSLB_PickBackendWithGeoIP_CoordinatesNearest_BackendUnavailableFallbackToNext(t *testing.T) {
+	db, err := geoip2.Open("tests/GeoLite2-City.mmdb")
+	if err != nil {
+		t.Skip("GeoLite2-City.mmdb not found, skipping coordinate fallback test")
+	}
+	defer db.Close()
+
+	backendNearUnavailable := &MockBackend{Backend: &Backend{
+		Address:        "92.0.0.1",
+		Enable:         true,
+		Priority:       20,
+		Longitude:      -122.2727, // Oakland, CA
+		Latitude:       37.8044,
+		LongitudeRad:   -122.2727 * math.Pi / 180,
+		LatitudeRad:    37.8044 * math.Pi / 180,
+		HasCoordinates: true,
+	}}
+	backendNext := &MockBackend{Backend: &Backend{
+		Address:        "93.0.0.1",
+		Enable:         true,
+		Priority:       10,
+		Longitude:      -74.0060, // New York, US
+		Latitude:       40.7128,
+		LongitudeRad:   -74.0060 * math.Pi / 180,
+		LatitudeRad:    40.7128 * math.Pi / 180,
+		HasCoordinates: true,
+	}}
+	backendNearUnavailable.On("IsHealthy").Return(false)
+	backendNext.On("IsHealthy").Return(true)
+
+	record := &Record{
+		Fqdn:     "geo-coordinates-fallback.example.com.",
+		Mode:     "geoip",
+		Backends: []BackendInterface{backendNearUnavailable, backendNext},
+	}
+
+	g := &GSLB{
+		GeoIPCityDB: db,
+	}
+
+	ips, err := g.pickBackendWithGeoIP(record, dns.TypeA, net.ParseIP("9.9.9.9")) // Berkeley, CA in test DB
+	assert.NoError(t, err)
+	assert.Equal(t, []string{"93.0.0.1"}, ips)
 }
 
 func TestGSLB_PickBackendWithGeoIP_ASN_MaxMind(t *testing.T) {

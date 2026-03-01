@@ -44,10 +44,33 @@ The GSLB plugin supports several backend selection modes, configurable per recor
 
 - **Description:** Selects the backend(s) closest to the client based on a location map (subnet-to-location mapping), by country, city, or ASN using MaxMind databases. Requires the `geoip_maxmind` or `geoip_custom` options.
 - **Matching behavior (current logic):**
+  - If `city_db` is loaded and backends define `latitude` and `longitude`, the plugin computes client coordinates from MaxMind and returns the closest healthy+enabled backend for the requested record type.
   - Evaluates sources in this order: `city_db` hierarchy (`city -> subdivision -> country -> continent`), then `country_db` (`country -> continent`), then `asn_db`, then `geoip_custom` location map, then failover fallback.
   - Returns all healthy+enabled matches for `city_db`, `country_db`, and `geoip_custom` steps.
   - Returns only the first healthy+enabled ASN match in `asn_db` step.
+  - If the nearest backend is unhealthy/disabled, the next nearest healthy backend is selected.
 - **Use case:** Directs users to the nearest datacenter, region, or country for lower latency.
+- **Coordinates fields:** `longitude` and `latitude` are supported.
+- **Example (distance-based with coordinates):**
+  ```yaml
+  mode: geoip
+  description: GeoIP nearest-backend routing based on MaxMind city coordinates
+  backends:
+    - address: 172.16.0.10
+      description: webapp10
+      longitude: -121.8863
+      latitude: 37.3382
+      enable: true
+      healthchecks:
+        - https_default
+    - address: 172.16.0.11
+      description: webapp11
+      longitude: -122.2711
+      latitude: 37.8044
+      enable: true
+      healthchecks:
+        - https_default
+  ```
 - **Example (GeoIP city behavior):**
   ```yaml
   mode: geoip

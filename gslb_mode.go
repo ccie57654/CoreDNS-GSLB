@@ -2,6 +2,7 @@ package gslb
 
 import (
 	"fmt"
+	"math"
 	"math/rand"
 	"net"
 	"sort"
@@ -155,6 +156,13 @@ func (g *GSLB) pickBackendWithGeoIP(record *Record, recordType uint16, clientIP 
 	if g.GeoIPCityDB != nil {
 		recordCity, err := g.GeoIPCityDB.City(clientIP)
 		if err == nil && recordCity != nil {
+			clientLatitude := recordCity.Location.Latitude
+			clientLongitude := recordCity.Location.Longitude
+			if nearest, ok := g.pickNearestBackendByCoordinates(record, recordType, clientLatitude, clientLongitude); ok {
+				IncBackendSelected(record.Fqdn, nearest)
+				return []string{nearest}, nil
+			}
+
 			cityName := ""
 			if recordCity.City.Names != nil {
 				cityName = recordCity.City.Names["en"]
@@ -394,4 +402,73 @@ func (g *GSLB) pickBackendWithGeoIP(record *Record, recordType uint16, clientIP 
 
 	// 5. Fallback: failover (priority order)
 	return g.pickBackendWithFailover(record, recordType)
+}
+
+func isAddressTypeCompatible(ip string, recordType uint16) bool {
+	parsedIP := net.ParseIP(ip)
+	if parsedIP == nil {
+		return false
+	}
+	if recordType == dns.TypeA {
+		return parsedIP.To4() != nil
+	}
+	if recordType == dns.TypeAAAA {
+		return parsedIP.To16() != nil && parsedIP.To4() == nil
+	}
+	return false
+}
+
+func (g *GSLB) pickNearestBackendByCoordinates(record *Record, recordType uint16, clientLatitude, clientLongitude float64) (string, bool) {
+	clientLatitudeRad := clientLatitude * math.Pi / 180
+	clientLongitudeRad := clientLongitude * math.Pi / 180
+
+	bestAddress := ""
+	bestDistance := 0.0
+	bestPriority := 0
+	found := false
+
+	for _, backend := range record.Backends {
+		if !backend.IsHealthy() || !backend.IsEnabled() || !backend.HasGeoCoordinates() {
+			continue
+		}
+		address := backend.GetAddress()
+		if !isAddressTypeCompatible(address, recordType) {
+			continue
+		}
+
+		distance := haversineDistanceRad(clientLatitudeRad, clientLongitudeRad, backend.GetLatitudeRad(), backend.GetLongitudeRad())
+		priority := backend.GetPriority()
+		if !found {
+			bestAddress = address
+			bestDistance = distance
+			bestPriority = priority
+			found = true
+			continue
+		}
+		if distance < bestDistance ||
+			(distance == bestDistance && (priority < bestPriority ||
+				(priority == bestPriority && address < bestAddress))) {
+			bestAddress = address
+			bestDistance = distance
+			bestPriority = priority
+		}
+	}
+
+	if !found {
+		return "", false
+	}
+	return bestAddress, true
+}
+
+func haversineDistanceRad(lat1Rad, lon1Rad, lat2Rad, lon2Rad float64) float64 {
+	const earthRadiusKm = 6371.0
+
+	deltaLat := lat2Rad - lat1Rad
+	deltaLon := lon2Rad - lon1Rad
+
+	a := math.Sin(deltaLat/2)*math.Sin(deltaLat/2) +
+		math.Cos(lat1Rad)*math.Cos(lat2Rad)*math.Sin(deltaLon/2)*math.Sin(deltaLon/2)
+	c := 2 * math.Atan2(math.Sqrt(a), math.Sqrt(1-a))
+
+	return earthRadiusKm * c
 }
