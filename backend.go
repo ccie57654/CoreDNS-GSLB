@@ -21,7 +21,7 @@ type Backend struct {
 	HealthChecks    []GenericHealthCheck `yaml:"healthchecks"` // Health check configurations
 	Timeout         string               // Timeout for requests
 	Alive           bool                 // Indicates if the backend is alive
-	Continent       string               // Continent code or name for GeoIP (e.g. EU, Europe)
+	Continent       string               // Continent code for GeoIP (e.g. EU)
 	Country         string               // Country code for GeoIP
 	Subdivision     string               // Subdivision/state code for GeoIP (e.g. CA, NY)
 	City            string               // City name for GeoIP

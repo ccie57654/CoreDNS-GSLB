@@ -43,7 +43,48 @@ The GSLB plugin supports several backend selection modes, configurable per recor
 ### GeoIP
 
 - **Description:** Selects the backend(s) closest to the client based on a location map (subnet-to-location mapping), by country, city, or ASN using MaxMind databases. Requires the `geoip_maxmind` or `geoip_custom` options.
+- **Matching behavior (current logic):**
+  - Evaluates sources in this order: `city_db` hierarchy (`city -> subdivision -> country -> continent`), then `country_db` (`country -> continent`), then `asn_db`, then `geoip_custom` location map, then failover fallback.
+  - Returns all healthy+enabled matches for `city_db`, `country_db`, and `geoip_custom` steps.
+  - Returns only the first healthy+enabled ASN match in `asn_db` step.
 - **Use case:** Directs users to the nearest datacenter, region, or country for lower latency.
+- **Example (GeoIP city behavior):**
+  ```yaml
+  mode: geoip
+  description: GeoIP-based routing example for multi geo distributed backends
+  backends:
+    - address: 172.16.0.10
+      description: webapp10
+      country: US
+      subdivision: CA
+      city: San Jose
+      enable: true
+      healthchecks:
+        - https_default
+    - address: 172.16.0.11
+      description: webapp11
+      country: US
+      subdivision: CA
+      city: Oakland
+      enable: true
+      healthchecks:
+        - https_default
+    - address: 172.16.0.12
+      description: webapp12
+      country: CA
+      subdivision: BC
+      continent: NA
+      enable: true
+      healthchecks:
+        - https_default
+    - address: 172.16.0.13
+      description: webapp13
+      continent: EU
+  ```
+  Expected behavior for a client in San Jose:
+  - First match: `172.16.0.10` (city-level).
+  - If `172.16.0.10` is down, fallback can match `172.16.0.11` at subdivision level (`CA`).
+  - If US country matches are unavailable, fallback can match `172.16.0.12` at continent level (`NA`).
 - **Example (custom-location-based):**
   ```yaml
   mode: "geoip"
@@ -133,4 +174,3 @@ The GSLB plugin supports several backend selection modes, configurable per recor
   - The probability of selection is: `weight / sum(weights of all healthy backends)`.
 
 If no healthy backend matches the client's country or location, the plugin falls back to failover mode.
-

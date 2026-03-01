@@ -171,7 +171,7 @@ jobs:
         run: |
           resp=$(curl -s -X GET http://127.0.0.1:8080/api/overview | jq 'map(length) | add')
           echo "Got Nb records: $resp"
-          [ "$resp" = "5" ] || (echo "Expected 5 records, got $resp" && exit 1)
+          [ "$resp" = "6" ] || (echo "Expected 6 records, got $resp" && exit 1)
 
       - name: Show docker-compose logs on failure
         if: failure()
