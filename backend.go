@@ -3,6 +3,7 @@ package gslb
 import (
 	"context"
 	"fmt"
+	"math"
 	"sync"
 	"time"
 
@@ -21,10 +22,17 @@ type Backend struct {
 	HealthChecks    []GenericHealthCheck `yaml:"healthchecks"` // Health check configurations
 	Timeout         string               // Timeout for requests
 	Alive           bool                 // Indicates if the backend is alive
+	Continent       string               // Continent code for GeoIP (e.g. EU)
 	Country         string               // Country code for GeoIP
+	Subdivision     string               // Subdivision/state code for GeoIP (e.g. CA, NY)
 	City            string               // City name for GeoIP
 	ASN             string               // ASN for GeoIP
 	Location        string               // location
+	Longitude       float64              // Longitude for distance-based GeoIP routing
+	Latitude        float64              // Latitude for distance-based GeoIP routing
+	LongitudeRad    float64              // Precomputed longitude in radians for distance calculations
+	LatitudeRad     float64              // Precomputed latitude in radians for distance calculations
+	HasCoordinates  bool                 // Indicates whether both coordinates were explicitly configured
 	LastHealthcheck time.Time            // Last time a healthcheck was launched
 	mutex           sync.RWMutex
 }
@@ -80,8 +88,16 @@ func (b *Backend) GetTimeout() string {
 	return b.Timeout
 }
 
+func (b *Backend) GetContinent() string {
+	return b.Continent
+}
+
 func (b *Backend) GetCountry() string {
 	return b.Country
+}
+
+func (b *Backend) GetSubdivision() string {
+	return b.Subdivision
 }
 
 func (b *Backend) GetCity() string {
@@ -96,6 +112,26 @@ func (b *Backend) GetLocation() string {
 	return b.Location
 }
 
+func (b *Backend) GetLongitude() float64 {
+	return b.Longitude
+}
+
+func (b *Backend) GetLatitude() float64 {
+	return b.Latitude
+}
+
+func (b *Backend) GetLongitudeRad() float64 {
+	return b.LongitudeRad
+}
+
+func (b *Backend) GetLatitudeRad() float64 {
+	return b.LatitudeRad
+}
+
+func (b *Backend) HasGeoCoordinates() bool {
+	return b.HasCoordinates
+}
+
 func (b *Backend) UnmarshalYAML(unmarshal func(interface{}) error) error {
 	var raw struct {
 		Description  string        `yaml:"description" default:""`
@@ -106,10 +142,14 @@ func (b *Backend) UnmarshalYAML(unmarshal func(interface{}) error) error {
 		Tags         []string      `yaml:"tags"`
 		Timeout      string        `yaml:"timeout" default:"5s"`
 		HealthChecks []HealthCheck `yaml:"healthchecks"`
+		Continent    string        `yaml:"continent"`
 		Country      string        `yaml:"country"`
+		Subdivision  string        `yaml:"subdivision"`
 		City         string        `yaml:"city"`
 		ASN          string        `yaml:"asn"`
 		Location     string        `yaml:"location"`
+		Longitude    *float64      `yaml:"longitude"`
+		Latitude     *float64      `yaml:"latitude"`
 	}
 	defaults.Set(&raw)
 	if err := unmarshal(&raw); err != nil {
@@ -122,10 +162,24 @@ func (b *Backend) UnmarshalYAML(unmarshal func(interface{}) error) error {
 	b.Enable = raw.Enable
 	b.Tags = raw.Tags
 	b.Timeout = raw.Timeout
+	b.Continent = raw.Continent
 	b.Country = raw.Country
+	b.Subdivision = raw.Subdivision
 	b.City = raw.City
 	b.ASN = raw.ASN
 	b.Location = raw.Location
+	longitudeSet := false
+	latitudeSet := false
+	if raw.Longitude != nil {
+		b.Longitude = *raw.Longitude
+		longitudeSet = true
+	}
+	if raw.Latitude != nil {
+		b.Latitude = *raw.Latitude
+		latitudeSet = true
+	}
+	b.HasCoordinates = longitudeSet && latitudeSet
+	b.recomputeCoordinateRadians()
 	for _, hc := range raw.HealthChecks {
 		specificHC, err := hc.ToSpecificHealthCheck()
 		if err != nil {
@@ -173,9 +227,19 @@ func (b *Backend) updateBackend(newBackend BackendInterface) {
 		b.Timeout = newBackend.GetTimeout()
 	}
 
+	if b.Continent != newBackend.GetContinent() {
+		log.Infof("[%s] backend %s updated, continent changed from %s to %s", b.Fqdn, b.Address, b.Continent, newBackend.GetContinent())
+		b.Continent = newBackend.GetContinent()
+	}
+
 	if b.Country != newBackend.GetCountry() {
 		log.Infof("[%s] backend %s updated, country changed from %s to %s", b.Fqdn, b.Address, b.Country, newBackend.GetCountry())
 		b.Country = newBackend.GetCountry()
+	}
+
+	if b.Subdivision != newBackend.GetSubdivision() {
+		log.Infof("[%s] backend %s updated, subdivision changed from %s to %s", b.Fqdn, b.Address, b.Subdivision, newBackend.GetSubdivision())
+		b.Subdivision = newBackend.GetSubdivision()
 	}
 
 	if b.City != newBackend.GetCity() {
@@ -192,6 +256,23 @@ func (b *Backend) updateBackend(newBackend BackendInterface) {
 		log.Infof("[%s] backend %s updated, location changed from %s to %s", b.Fqdn, b.Address, b.Location, newBackend.GetLocation())
 		b.Location = newBackend.GetLocation()
 	}
+
+	if b.Longitude != newBackend.GetLongitude() {
+		log.Infof("[%s] backend %s updated, longitude changed from %f to %f", b.Fqdn, b.Address, b.Longitude, newBackend.GetLongitude())
+		b.Longitude = newBackend.GetLongitude()
+	}
+
+	if b.Latitude != newBackend.GetLatitude() {
+		log.Infof("[%s] backend %s updated, latitude changed from %f to %f", b.Fqdn, b.Address, b.Latitude, newBackend.GetLatitude())
+		b.Latitude = newBackend.GetLatitude()
+	}
+
+	if b.HasCoordinates != newBackend.HasGeoCoordinates() {
+		log.Infof("[%s] backend %s updated, coordinate availability changed from %v to %v", b.Fqdn, b.Address, b.HasCoordinates, newBackend.HasGeoCoordinates())
+		b.HasCoordinates = newBackend.HasGeoCoordinates()
+	}
+
+	b.recomputeCoordinateRadians()
 
 	// Compare tags slice
 	if !tagsEqual(b.Tags, newBackend.GetTags()) {
@@ -295,6 +376,16 @@ func tagsEqual(t1, t2 []string) bool {
 	return true
 }
 
+func (b *Backend) recomputeCoordinateRadians() {
+	if !b.HasCoordinates {
+		b.LongitudeRad = 0
+		b.LatitudeRad = 0
+		return
+	}
+	b.LongitudeRad = b.Longitude * math.Pi / 180
+	b.LatitudeRad = b.Latitude * math.Pi / 180
+}
+
 type BackendInterface interface {
 	GetFqdn() string
 	SetFqdn(fqdn string)
@@ -306,10 +397,17 @@ type BackendInterface interface {
 	GetTags() []string
 	GetHealthChecks() []GenericHealthCheck
 	GetTimeout() string
+	GetContinent() string
 	GetCountry() string
+	GetSubdivision() string
 	GetCity() string
 	GetASN() string
 	GetLocation() string
+	GetLongitude() float64
+	GetLatitude() float64
+	GetLongitudeRad() float64
+	GetLatitudeRad() float64
+	HasGeoCoordinates() bool
 	IsHealthy() bool
 	runHealthChecks(retries int, timeout time.Duration)
 	removeBackend()
