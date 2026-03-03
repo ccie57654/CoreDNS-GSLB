@@ -1,8 +1,6 @@
 module github.com/dmachard/coredns-gslb
 
-go 1.24.0
-
-toolchain go1.24.3
+go 1.25
 
 require (
 	github.com/coredns/caddy v1.1.4-0.20250930002214-15135a999495
