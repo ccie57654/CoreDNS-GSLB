@@ -3,7 +3,7 @@ module github.com/dmachard/coredns-gslb
 go 1.25
 
 require (
-	github.com/coredns/caddy v1.1.4-0.20250930002214-15135a999495
+	github.com/coredns/caddy v1.1.4
 	github.com/coredns/coredns v1.14.1
 	github.com/creasty/defaults v1.8.0
 	github.com/go-sql-driver/mysql v1.9.3
