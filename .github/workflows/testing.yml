@@ -73,7 +73,7 @@ jobs:
           echo "coredns_gslb did not become ready in time" >&2
           exit 1
 
-      - name: Wait for healthcheck to be ready (30s)
+      - name: Wait for healthcheck to be ready (15s)
         run: sleep 15
 
       - name: Check initial dig (should be 172.16.0.10)
