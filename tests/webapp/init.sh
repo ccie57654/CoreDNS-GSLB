@@ -1,8 +1,11 @@
 #!/bin/sh
 
-# docker-compose depends_on is still too fast sometimes
-# adding a sleep 15s to make sure gen_certs is complete
-sleep 15s
+# ensure the root ca cert exists before continuing
+# while [ ! -f "/app/certs/ca/cert.pem" ]
+while [ $(find /app/certs/ca/ -type f -name "*.pem" | wc -l) -lt 2 ]
+do
+  sleep 2s
+done
 
 APP_NAME=${APP_NAME:-WebApp} # WebApplication1[0-2]
 cn_san=$(echo $APP_NAME | tr '[:upper:]' '[:lower:]')
